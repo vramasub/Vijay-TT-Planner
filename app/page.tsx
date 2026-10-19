@@ -144,7 +144,7 @@ const SCENARIOS: Record<string, ScenarioData> = {
     milestones: [
       { name: 'Shop Health Audit', start: 1, end: 1, type: 'Operational' },
       { name: 'Account Re-verification', start: 1, end: 2, type: 'Operational' },
-      { name: 'API Bridge Connection', start: 3, end: 4, type: 'Technical' },
+      { name: 'API Bridge Connection', start: 3, end: 4, type: 'Technical', scalesWithSKUs: true },
       { name: 'End-to-End Order Test', start: 5, end: 5, type: 'Technical' },
       { name: 'GO LIVE', start: 6, end: 6, type: 'Technical' },
     ],
@@ -154,19 +154,23 @@ const SCENARIOS: Record<string, ScenarioData> = {
 // --- SKU-driven timeline ---
 
 /** Every started batch of this many SKUs takes one week to set up. */
-const SKUS_PER_WEEK = 20;
+const SKUS_PER_WEEK: Record<SKUStatus, number> = {
+  'New SKUs': 20,
+  'Existing SKUs': 50,
+};
 
 /**
  * Extends the plan for the number of SKUs to be set up.
  *
- * - Only applies when SKUs are new; existing SKUs need no setup.
- * - Extra weeks = ceil(skuCount / SKUS_PER_WEEK), added to the MMS stage
- *   (the milestone flagged `scalesWithSKUs`).
+ * - Extra weeks = ceil(skuCount / SKUS_PER_WEEK[skuStatus]): 20 SKUs per week for
+ *   new SKUs, 50 per week for existing SKUs.
+ * - Added to the stage flagged `scalesWithSKUs`: the MMS stage, or "API Bridge
+ *   Connection" in the existing-SKUs plan, which has no MMS stage.
  * - Milestones that start at or after the end of that stage move later by the
  *   same number of weeks, so the original sequencing is kept and Go Live moves out.
  */
 const applySkuTimeline = (base: ScenarioData, skuStatus: SKUStatus, skuCount: number): ScenarioData => {
-  const extra = skuStatus === 'New SKUs' && skuCount > 0 ? Math.ceil(skuCount / SKUS_PER_WEEK) : 0;
+  const extra = skuCount > 0 ? Math.ceil(skuCount / SKUS_PER_WEEK[skuStatus]) : 0;
   const mms = base.milestones.find(m => m.scalesWithSKUs);
   if (extra === 0 || !mms) return { ...base, skuExtraWeeks: 0 };
 
@@ -443,7 +447,7 @@ export default function TikTokShopPlanner() {
                       <p className="text-zinc-500 text-xs font-medium uppercase tracking-wider">
                         {result.inputs.skuCount} {result.inputs.skuCount === 1 ? 'SKU' : 'SKUs'}
                         {!!result.scenario.skuExtraWeeks && (
-                          <span className="text-cyan-400"> · +{result.scenario.skuExtraWeeks} {result.scenario.skuExtraWeeks === 1 ? 'wk' : 'wks'} MMS setup</span>
+                          <span className="text-cyan-400"> · +{result.scenario.skuExtraWeeks} {result.scenario.skuExtraWeeks === 1 ? 'wk' : 'wks'} SKU setup</span>
                         )}
                       </p>
                     </div>
