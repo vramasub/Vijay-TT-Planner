@@ -1,0 +1,8 @@
+{
+  "name": "THG TikTok Shop Project Planner",
+  "description": "An internal tool for THG Business Development to plan TikTok Shop onboarding projects, including document requirements and timelines.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
