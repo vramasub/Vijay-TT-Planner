@@ -40,6 +40,8 @@ interface MilestoneTask {
   start: number;
   end: number;
   type: 'Operational' | 'Technical';
+  /** The MMS stage that grows as more SKUs have to be set up (see applySkuTimeline). */
+  scalesWithSKUs?: boolean;
 }
 
 interface ScenarioData {
@@ -47,6 +49,8 @@ interface ScenarioData {
   durationWeeks: number;
   files: RequiredFile[];
   milestones: MilestoneTask[];
+  /** Weeks added to the base plan for SKU setup (0 when none). */
+  skuExtraWeeks?: number;
 }
 
 const SCENARIOS: Record<string, ScenarioData> = {
@@ -81,7 +85,7 @@ const SCENARIOS: Record<string, ScenarioData> = {
       { name: 'Financial Reporting', start: 10, end: 10, type: 'Operational' },
       { name: 'Site Franking', start: 4, end: 4, type: 'Technical' },
       { name: 'Gateway Set Up', start: 5, end: 5, type: 'Technical' },
-      { name: 'MMS Config', start: 5, end: 8, type: 'Technical' },
+      { name: 'MMS Config', start: 5, end: 8, type: 'Technical', scalesWithSKUs: true },
       { name: 'Product Listing', start: 8, end: 8, type: 'Technical' },
       { name: 'Live Order Testing', start: 9, end: 10, type: 'Technical' },
       { name: 'Go Live', start: 10, end: 10, type: 'Technical' },
@@ -106,7 +110,7 @@ const SCENARIOS: Record<string, ScenarioData> = {
       { name: 'Catalogue & Content Upload', start: 2, end: 3, type: 'Operational' },
       { name: 'TTS Build Phase', start: 3, end: 5, type: 'Operational' },
       { name: 'Stock Logistics (PO/Shipment)', start: 4, end: 6, type: 'Operational' },
-      { name: 'MMS Configuration', start: 4, end: 7, type: 'Technical' },
+      { name: 'MMS Configuration', start: 4, end: 7, type: 'Technical', scalesWithSKUs: true },
       { name: 'Live Testing & QA', start: 7, end: 8, type: 'Technical' },
       { name: 'GO LIVE', start: 8, end: 8, type: 'Technical' },
     ],
@@ -125,7 +129,7 @@ const SCENARIOS: Record<string, ScenarioData> = {
       { name: 'SKU Catalog Audit', start: 1, end: 1, type: 'Operational' },
       { name: 'Catalogue & Content Setup', start: 2, end: 3, type: 'Operational' },
       { name: 'Warehouse Integration Update', start: 3, end: 4, type: 'Operational' },
-      { name: 'MMS SKU Mapping', start: 4, end: 5, type: 'Technical' },
+      { name: 'MMS SKU Mapping', start: 4, end: 5, type: 'Technical', scalesWithSKUs: true },
       { name: 'Listing Verification', start: 5, end: 6, type: 'Technical' },
       { name: 'GO LIVE', start: 6, end: 6, type: 'Technical' },
     ],
@@ -140,11 +144,44 @@ const SCENARIOS: Record<string, ScenarioData> = {
     milestones: [
       { name: 'Shop Health Audit', start: 1, end: 1, type: 'Operational' },
       { name: 'Account Re-verification', start: 1, end: 2, type: 'Operational' },
-      { name: 'API Bridge Connection', start: 3, end: 4, type: 'Technical' },
+      { name: 'API Bridge Connection', start: 3, end: 4, type: 'Technical', scalesWithSKUs: true },
       { name: 'End-to-End Order Test', start: 5, end: 5, type: 'Technical' },
       { name: 'GO LIVE', start: 6, end: 6, type: 'Technical' },
     ],
   },
+};
+
+// --- SKU-driven timeline ---
+
+/** Every started batch of this many SKUs takes one week to set up. */
+const SKUS_PER_WEEK: Record<SKUStatus, number> = {
+  'New SKUs': 20,
+  'Existing SKUs': 50,
+};
+
+/**
+ * Extends the plan for the number of SKUs to be set up.
+ *
+ * - Extra weeks = ceil(skuCount / SKUS_PER_WEEK[skuStatus]): 20 SKUs per week for
+ *   new SKUs, 50 per week for existing SKUs.
+ * - Added to the stage flagged `scalesWithSKUs`: the MMS stage, or "API Bridge
+ *   Connection" in the existing-SKUs plan, which has no MMS stage.
+ * - Milestones that start at or after the end of that stage move later by the
+ *   same number of weeks, so the original sequencing is kept and Go Live moves out.
+ */
+const applySkuTimeline = (base: ScenarioData, skuStatus: SKUStatus, skuCount: number): ScenarioData => {
+  const extra = skuCount > 0 ? Math.ceil(skuCount / SKUS_PER_WEEK[skuStatus]) : 0;
+  const mms = base.milestones.find(m => m.scalesWithSKUs);
+  if (extra === 0 || !mms) return { ...base, skuExtraWeeks: 0 };
+
+  const mmsEnd = mms.end;
+  const milestones = base.milestones.map(m => {
+    if (m === mms) return { ...m, end: m.end + extra };
+    if (m.start >= mmsEnd) return { ...m, start: m.start + extra, end: m.end + extra };
+    return m;
+  });
+  const durationWeeks = base.durationWeeks + extra;
+  return { ...base, milestones, durationWeeks, duration: `${durationWeeks} Weeks`, skuExtraWeeks: extra };
 };
 
 // --- Helper Functions ---
@@ -216,11 +253,11 @@ export default function TikTokShopPlanner() {
 
   const onSubmit = (data: ProjectInputs) => {
     const scenarioKey = `${data.customerStatus}-${data.brandStatus}-${data.skuStatus}`;
-    const scenario = SCENARIOS[scenarioKey];
+    const baseScenario = SCENARIOS[scenarioKey];
 
-    if (scenario) {
+    if (baseScenario) {
       setUnsupported(null);
-      setResult({ inputs: data, scenario });
+      setResult({ inputs: data, scenario: applySkuTimeline(baseScenario, data.skuStatus, data.skuCount) });
     } else {
       setResult(null);
       setUnsupported(`${data.customerStatus} / ${data.brandStatus} / ${data.skuStatus}`);
@@ -409,6 +446,9 @@ export default function TikTokShopPlanner() {
                       </p>
                       <p className="text-zinc-500 text-xs font-medium uppercase tracking-wider">
                         {result.inputs.skuCount} {result.inputs.skuCount === 1 ? 'SKU' : 'SKUs'}
+                        {!!result.scenario.skuExtraWeeks && (
+                          <span className="text-cyan-400"> · +{result.scenario.skuExtraWeeks} {result.scenario.skuExtraWeeks === 1 ? 'wk' : 'wks'} SKU setup</span>
+                        )}
                       </p>
                     </div>
                   </div>
