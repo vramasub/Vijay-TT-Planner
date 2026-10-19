@@ -157,15 +157,27 @@ const formatDate = (date: Date) => {
   });
 };
 
+// Parse a YYYY-MM-DD string as a LOCAL date. `new Date('YYYY-MM-DD')` is parsed as UTC,
+// which shifts the displayed date back a day for users west of UTC.
+const parseLocalDate = (dateStr: string) => {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d);
+};
+
+const toLocalISODate = (date: Date) => {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+};
+
 const getTargetLiveDate = (startDate: string, weeks: number) => {
-  const date = new Date(startDate);
+  const date = parseLocalDate(startDate);
   date.setDate(date.getDate() + (weeks * 7));
   return formatDate(date);
 };
 
 const calculateReadiness = (startDateStr: string, durationWeeks: number) => {
   const now = new Date();
-  const start = new Date(startDateStr);
+  const start = parseLocalDate(startDateStr);
   const end = new Date(start);
   end.setDate(end.getDate() + (durationWeeks * 7));
 
@@ -179,7 +191,7 @@ const calculateReadiness = (startDateStr: string, durationWeeks: number) => {
 };
 
 const getWeekDateRange = (startDateStr: string, weekIndex: number) => {
-  const start = new Date(startDateStr);
+  const start = parseLocalDate(startDateStr);
   start.setDate(start.getDate() + weekIndex * 7);
   const end = new Date(start);
   end.setDate(end.getDate() + 6);
@@ -190,25 +202,32 @@ const getWeekDateRange = (startDateStr: string, weekIndex: number) => {
 
 export default function TikTokShopPlanner() {
   const [result, setResult] = useState<{ inputs: ProjectInputs; scenario: ScenarioData } | null>(null);
-  
+  const [unsupported, setUnsupported] = useState<string | null>(null);
+
   const { register, handleSubmit, formState: { errors } } = useForm<ProjectInputs>({
     defaultValues: {
       customerStatus: 'New Customer',
       brandStatus: 'New Brand',
       skuStatus: 'New SKUs',
       skuCount: 1,
-      startDate: new Date().toISOString().split('T')[0]
+      startDate: toLocalISODate(new Date())
     }
   });
 
   const onSubmit = (data: ProjectInputs) => {
     const scenarioKey = `${data.customerStatus}-${data.brandStatus}-${data.skuStatus}`;
     const scenario = SCENARIOS[scenarioKey];
-    
+
     if (scenario) {
+      setUnsupported(null);
       setResult({ inputs: data, scenario });
+    } else {
+      setResult(null);
+      setUnsupported(`${data.customerStatus} / ${data.brandStatus} / ${data.skuStatus}`);
     }
   };
+
+  const notBlank = (v: string) => v.trim().length > 0 || 'Required';
 
   return (
     <div className="bg-zinc-50 font-sans text-zinc-900 w-full min-h-screen flex flex-col overflow-x-hidden">
@@ -245,7 +264,7 @@ export default function TikTokShopPlanner() {
               <div className="space-y-1.5">
                 <label className="text-[11px] font-bold text-zinc-500 uppercase tracking-tighter">Client Name</label>
                 <input
-                  {...register('clientName', { required: 'Required' })}
+                  {...register('clientName', { required: 'Required', validate: notBlank })}
                   placeholder="e.g. L'Oreal Group"
                   className="w-full px-4 py-3 border border-zinc-200 rounded-xl text-sm focus:ring-2 focus:ring-black outline-none transition-all"
                 />
@@ -255,7 +274,7 @@ export default function TikTokShopPlanner() {
               <div className="space-y-1.5">
                 <label className="text-[11px] font-bold text-zinc-500 uppercase tracking-tighter">Brand Name</label>
                 <input
-                  {...register('brandName', { required: 'Required' })}
+                  {...register('brandName', { required: 'Required', validate: notBlank })}
                   placeholder="e.g. Kiehl's"
                   className="w-full px-4 py-3 border border-zinc-200 rounded-xl text-sm focus:ring-2 focus:ring-black outline-none transition-all"
                 />
@@ -300,9 +319,17 @@ export default function TikTokShopPlanner() {
                   <label className="text-[11px] font-bold text-zinc-500 uppercase tracking-tighter">SKU Count</label>
                   <input
                     type="number"
-                    {...register('skuCount', { min: 1 })}
+                    min={1}
+                    step={1}
+                    {...register('skuCount', {
+                      valueAsNumber: true,
+                      required: 'Required',
+                      min: { value: 1, message: 'Min 1' },
+                      validate: (v) => Number.isInteger(v) || 'Whole number',
+                    })}
                     className="w-full px-4 py-3 border border-zinc-200 rounded-xl text-sm focus:ring-2 focus:ring-black outline-none transition-all"
                   />
+                  {errors.skuCount && <p className="text-red-500 text-[10px] font-bold uppercase">{errors.skuCount.message}</p>}
                 </div>
               </div>
 
@@ -331,8 +358,22 @@ export default function TikTokShopPlanner() {
         {/* Output Section (Bento Grid) */}
         <section className="lg:col-span-8">
           <AnimatePresence mode="wait">
-            {!result ? (
-              <motion.div 
+            {!result && unsupported ? (
+              <motion.div
+                key="unsupported"
+                role="alert"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="h-full flex flex-col items-center justify-center text-center p-12 border-2 border-dashed border-amber-300 bg-amber-50 rounded-3xl"
+              >
+                <h3 className="text-xl font-bold text-zinc-800">No Plan Template Available</h3>
+                <p className="text-zinc-600 max-w-sm mt-2">
+                  There is no project plan defined for <span className="font-bold">{unsupported}</span> yet. Try a different combination.
+                </p>
+              </motion.div>
+            ) : !result ? (
+              <motion.div
                 key="empty"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -365,6 +406,9 @@ export default function TikTokShopPlanner() {
                       </p>
                       <p className="text-zinc-400 text-xs font-medium uppercase tracking-wider">
                         Scenario: {result.inputs.customerStatus} Onboarding
+                      </p>
+                      <p className="text-zinc-500 text-xs font-medium uppercase tracking-wider">
+                        {result.inputs.skuCount} {result.inputs.skuCount === 1 ? 'SKU' : 'SKUs'}
                       </p>
                     </div>
                   </div>
@@ -440,7 +484,7 @@ export default function TikTokShopPlanner() {
                           <div className="space-y-4">
                             <div className="space-y-1">
                               <p className="text-[10px] font-black text-zinc-400 uppercase leading-none">Start Phase</p>
-                              <p className="text-sm font-bold text-zinc-800">{formatDate(new Date(result.inputs.startDate))}</p>
+                              <p className="text-sm font-bold text-zinc-800">{formatDate(parseLocalDate(result.inputs.startDate))}</p>
                             </div>
                             <div className="space-y-1">
                               <p className="text-[10px] font-black text-zinc-900 bg-cyan-100 px-2 rounded w-fit uppercase leading-none">Live Target</p>
